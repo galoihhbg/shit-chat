@@ -39,3 +39,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local secrets
+.env
+
+# proof-threshold test output
+.proof-tmp
+
+# static web build
+dist

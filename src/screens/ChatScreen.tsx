@@ -1,0 +1,176 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { formatClock, useCountdown } from '../components/Countdown';
+import {
+  fetchMessages,
+  sendMessage,
+  subscribeToRoom,
+  type ChatMessage,
+  type ToiletSession,
+} from '../lib/session';
+import { C } from '../theme';
+
+type Props = {
+  session: ToiletSession;
+  roomId: string;
+  partnerNickname: string;
+  onLeave: () => void;
+};
+
+export function ChatScreen({ session, roomId, partnerNickname, onLeave }: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState('');
+  const listRef = useRef<FlatList<ChatMessage>>(null);
+
+  const secondsLeft = useCountdown(session.expiresAt);
+  const urgent = secondsLeft <= 60;
+
+  const absorb = useCallback((incoming: ChatMessage) => {
+    setMessages((prev) => (prev.some((m) => m.id === incoming.id) ? prev : [...prev, incoming]));
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetchMessages(roomId)
+      .then((initial) => {
+        if (alive) setMessages(initial);
+      })
+      .catch(() => {});
+
+    const unsubscribe = subscribeToRoom(roomId, absorb);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [roomId, absorb]);
+
+  useEffect(() => {
+    if (messages.length) {
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    }
+  }, [messages.length]);
+
+  const submit = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setDraft('');
+    try {
+      await sendMessage(roomId, session, body);
+    } catch {
+      setDraft(body);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+    >
+      <View style={styles.header}>
+        <View style={styles.headerText}>
+          <Text style={styles.partner}>{partnerNickname}</Text>
+          <Text style={styles.partnerSub}>is also on the toilet</Text>
+        </View>
+        <Text style={[styles.clock, urgent && styles.clockUrgent]}>{formatClock(secondsLeft)}</Text>
+      </View>
+
+      <FlatList
+        ref={listRef}
+        data={messages}
+        keyExtractor={(m) => String(m.id)}
+        contentContainerStyle={styles.list}
+        ListEmptyComponent={
+          <Text style={styles.empty}>
+            Say something. You have {formatClock(secondsLeft)} and nothing to lose.
+          </Text>
+        }
+        renderItem={({ item }) => {
+          const mine = item.senderSession === session.id;
+          return (
+            <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
+              <Text style={[styles.body, mine && styles.bodyMine]}>{item.body}</Text>
+            </View>
+          );
+        }}
+      />
+
+      <View style={styles.composer}>
+        <TextInput
+          style={styles.input}
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="type something regrettable"
+          placeholderTextColor={C.dim}
+          maxLength={500}
+          multiline
+          onSubmitEditing={submit}
+          returnKeyType="send"
+        />
+        <Pressable onPress={submit} style={styles.send} disabled={!draft.trim()}>
+          <Text style={[styles.sendLabel, !draft.trim() && styles.sendDisabled]}>SEND</Text>
+        </Pressable>
+      </View>
+
+      <Pressable onPress={onLeave} style={styles.leave}>
+        <Text style={styles.leaveLabel}>flush and leave</Text>
+      </Pressable>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: C.panel,
+  },
+  headerText: { flex: 1 },
+  partner: { color: C.gold, fontSize: 20, fontWeight: '900' },
+  partnerSub: { color: C.dim, fontSize: 12, fontStyle: 'italic' },
+  clock: { color: C.ok, fontSize: 22, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  clockUrgent: { color: C.danger },
+  list: { padding: 16, gap: 8, flexGrow: 1 },
+  empty: { color: C.dim, fontSize: 14, textAlign: 'center', marginTop: 48, fontStyle: 'italic' },
+  bubble: { maxWidth: '82%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  mine: { alignSelf: 'flex-end', backgroundColor: C.gold, borderBottomRightRadius: 4 },
+  theirs: { alignSelf: 'flex-start', backgroundColor: C.panel, borderBottomLeftRadius: 4 },
+  body: { color: C.white, fontSize: 16, lineHeight: 22 },
+  bodyMine: { color: C.bg, fontWeight: '600' },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
+  input: {
+    flex: 1,
+    maxHeight: 110,
+    backgroundColor: C.panel,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: C.white,
+    fontSize: 16,
+  },
+  send: { paddingHorizontal: 14, paddingVertical: 14 },
+  sendLabel: { color: C.gold, fontSize: 15, fontWeight: '900', letterSpacing: 1 },
+  sendDisabled: { opacity: 0.35 },
+  leave: { alignItems: 'center', paddingVertical: 12 },
+  leaveLabel: { color: C.dim, fontSize: 13, textDecorationLine: 'underline' },
+});

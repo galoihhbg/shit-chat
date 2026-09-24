@@ -3,10 +3,22 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@expo/metro-runtime": "~57.0.16",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@supabase/supabase-js": "^2.109.0",
+    "base64-js": "^1.5.1",
     "expo": "~57.0.24",
+    "expo-camera": "~57.0.5",
+    "expo-crypto": "~57.0.3",
+    "expo-file-system": "~57.0.7",
+    "expo-image-manipulator": "~57.0.19",
     "expo-status-bar": "~57.0.1",
+    "jpeg-js": "^0.4.4",
     "react": "19.2.3",
-    "react-native": "0.86.3"
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-url-polyfill": "^4.0.0",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
@@ -16,7 +28,13 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test:proof": "tsc src/lib/proofMath.ts src/lib/challenges.ts --ignoreConfig --outDir .proof-tmp --module commonjs --target es2020 --skipLibCheck && node scripts/proof-check.js",
+    "web:build": "expo export --platform web --output-dir dist --clear",
+    "web:serve": "node scripts/serve-web.js",
+    "web:preview": "npm run web:build && npm run web:serve",
+    "test:schema": "bash scripts/test-schema.sh"
   },
   "private": true
 }
