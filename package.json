@@ -7,11 +7,12 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.109.0",
     "base64-js": "^1.5.1",
-    "expo": "~57.0.24",
+    "expo": "~57.0.25",
+    "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.5",
     "expo-crypto": "~57.0.3",
     "expo-file-system": "~57.0.7",
-    "expo-image-manipulator": "~57.0.19",
+    "expo-image-manipulator": "~57.0.20",
     "expo-status-bar": "~57.0.1",
     "jpeg-js": "^0.4.4",
     "react": "19.2.3",
@@ -26,15 +27,17 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test:proof": "tsc src/lib/proofMath.ts src/lib/challenges.ts --ignoreConfig --outDir .proof-tmp --module commonjs --target es2020 --skipLibCheck && node scripts/proof-check.js",
+    "test:proof": "tsc src/lib/proofMath.ts --ignoreConfig --outDir .proof-tmp --module commonjs --target es2020 --skipLibCheck && node scripts/proof-check.js",
     "web:build": "expo export --platform web --output-dir dist --clear",
     "web:serve": "node scripts/serve-web.js",
     "web:preview": "npm run web:build && npm run web:serve",
-    "test:schema": "bash scripts/test-schema.sh"
+    "test:schema": "bash scripts/test-schema.sh",
+    "test:gesture": "tsc src/lib/gesture/gestureClassifier.ts src/lib/gesture/landmarks.ts --ignoreConfig --outDir .gesture-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/gesture-test.js",
+    "test": "npm run typecheck && npm run test:gesture && npm run test:proof"
   },
   "private": true
 }

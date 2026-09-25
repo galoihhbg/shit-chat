@@ -48,3 +48,6 @@ yarn-error.*
 
 # static web build
 dist
+
+# gesture test output
+.gesture-tmp

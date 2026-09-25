@@ -5,6 +5,7 @@ import { randomChallenge, type Challenge } from './src/lib/challenges';
 import { SKIP_CAMERA } from './src/lib/devFlags';
 import { describeBackendError } from './src/lib/errors';
 import { endSession, startSession, type ToiletSession } from './src/lib/session';
+import { ensureAllModels, isToiletVisionAvailable } from './src/lib/vision';
 import { CameraScreen } from './src/screens/CameraScreen';
 import { ChallengeScreen } from './src/screens/ChallengeScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
@@ -27,6 +28,16 @@ export default function App() {
   const [lastChallengeId, setLastChallengeId] = useState<string>();
 
   const goHome = useCallback(() => setRoute({ name: 'home' }), []);
+
+  // Pull the ~12 MB of detector models down once, in the background, so the
+  // first verification is not stuck behind a download. No-op on web and in
+  // Expo Go, where there is no native module to feed them to.
+  useEffect(() => {
+    if (!isToiletVisionAvailable) return;
+    ensureAllModels().catch(() => {
+      // Retried on demand inside verifyProof.
+    });
+  }, []);
 
   const beginChallenge = useCallback(() => {
     const challenge = randomChallenge(lastChallengeId);

@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "apple"],
+  "apple": {
+    "modules": ["ToiletVisionModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.toiletvision.ToiletVisionModule"]
+  }
+}

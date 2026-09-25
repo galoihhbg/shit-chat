@@ -4,7 +4,7 @@ import { CameraView, useCameraPermissions, type CameraCapturedPicture } from 'ex
 import { BigButton } from '../components/BigButton';
 import type { Challenge } from '../lib/challenges';
 import { shred } from '../lib/shred';
-import { verifyProof } from '../lib/verify';
+import { verifyProof, type ProofStep } from '../lib/verify';
 import { C } from '../theme';
 
 type Props = {
@@ -13,13 +13,34 @@ type Props = {
   onCancel: () => void;
 };
 
-type Phase = 'ready' | 'working' | 'rejected';
+type Phase = 'ready' | 'working' | 'rejected' | 'verified';
+
+/** How long the VERIFIED stamp stays up before the session starts. */
+const VERIFIED_DWELL_MS = 900;
+
+function StepRow({ step }: { step: ProofStep }) {
+  const mark =
+    step.state === 'pass' ? '\u2713' : step.state === 'fail' ? '\u2717' : step.state === 'running' ? '\u00B7' : '\u00B7';
+  return (
+    <Text
+      style={[
+        styles.stepRow,
+        step.state === 'pass' && styles.stepPass,
+        step.state === 'fail' && styles.stepFail,
+        step.state === 'running' && styles.stepRunning,
+      ]}
+    >
+      {mark}  {step.label}
+    </Text>
+  );
+}
 
 export function CameraScreen({ challenge, onVerified, onCancel }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [phase, setPhase] = useState<Phase>('ready');
   const [reason, setReason] = useState('');
+  const [steps, setSteps] = useState<ProofStep[]>([]);
   const cameraRef = useRef<CameraView>(null);
 
   if (!permission) {
@@ -44,20 +65,25 @@ export function CameraScreen({ challenge, onVerified, onCancel }: Props) {
   }
 
   const capture = async () => {
-    if (phase === 'working') return;
+    if (phase === 'working' || phase === 'verified') return;
 
     setPhase('working');
     setReason('');
+    setSteps([]);
 
     let photo: CameraCapturedPicture | undefined;
     try {
-      photo = await cameraRef.current?.takePictureAsync({ quality: 0.5, skipProcessing: true });
+      // skipProcessing is deliberately off: it can leave the orientation in
+      // EXIF, and THUMBS_UP is decided by which way the thumb points.
+      photo = await cameraRef.current?.takePictureAsync({ quality: 0.6 });
       if (!photo?.uri) throw new Error('no photo');
 
-      const result = await verifyProof(photo.uri, challenge);
+      const result = await verifyProof(photo.uri, challenge, { onProgress: setSteps });
+      setSteps(result.steps);
 
       if (result.ok) {
-        onVerified();
+        setPhase('verified');
+        setTimeout(onVerified, VERIFIED_DWELL_MS);
         return;
       }
 
@@ -77,11 +103,20 @@ export function CameraScreen({ challenge, onVerified, onCancel }: Props) {
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} />
 
       <View style={styles.topBar}>
+        <Text style={styles.proofTitle}>{'\uD83D\uDEBD'} TOILET PROOF</Text>
         <Text style={styles.prompt}>
           {challenge.emoji}  SHOW {challenge.name}
         </Text>
-        <Text style={styles.subPrompt}>...with the toilet in shot</Text>
+        <Text style={styles.subPrompt}>...and include the toilet in the frame</Text>
       </View>
+
+      {(phase === 'working' || phase === 'rejected') && steps.length > 0 && (
+        <View style={styles.checklist}>
+          {steps.map((step) => (
+            <StepRow key={step.key} step={step} />
+          ))}
+        </View>
+      )}
 
       {phase === 'rejected' && (
         <View style={styles.rejectBanner}>
@@ -90,17 +125,28 @@ export function CameraScreen({ challenge, onVerified, onCancel }: Props) {
         </View>
       )}
 
+      {phase === 'verified' && (
+        <View style={styles.verifiedBanner}>
+          <Text style={styles.verifiedTitle}>{'\uD83D\uDEBD'} VERIFIED</Text>
+        </View>
+      )}
+
       <View style={styles.bottomBar}>
-        {phase === 'working' ? (
+        {phase === 'verified' ? (
+          <View style={styles.working}>
+            <Text style={styles.workingText}>starting your session...</Text>
+          </View>
+        ) : phase === 'working' ? (
           <View style={styles.working}>
             <ActivityIndicator color={C.gold} />
-            <Text style={styles.workingText}>inspecting your evidence...</Text>
+            <Text style={styles.workingText}>Checking...</Text>
           </View>
         ) : (
           <>
             <Pressable onPress={capture} style={styles.shutter}>
               <View style={styles.shutterInner} />
             </Pressable>
+            {phase === 'rejected' && <Text style={styles.retakeHint}>tap the shutter to retake</Text>}
             <View style={styles.bottomActions}>
               <Pressable onPress={() => setFacing((f) => (f === 'back' ? 'front' : 'back'))}>
                 <Text style={styles.smallAction}>flip</Text>
@@ -132,8 +178,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
+  proofTitle: { color: C.white, fontSize: 13, fontWeight: '900', letterSpacing: 3, opacity: 0.85 },
   prompt: { color: C.gold, fontSize: 22, fontWeight: '900', letterSpacing: 1 },
   subPrompt: { color: C.white, fontSize: 13, opacity: 0.75 },
+  checklist: {
+    position: 'absolute',
+    top: '26%',
+    left: 24,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 6,
+  },
+  stepRow: { color: C.dim, fontSize: 15, fontVariant: ['tabular-nums'] },
+  stepRunning: { color: C.white },
+  stepPass: { color: C.ok, fontWeight: '700' },
+  stepFail: { color: C.danger, fontWeight: '700' },
+  verifiedBanner: {
+    position: 'absolute',
+    top: '42%',
+    left: 24,
+    right: 24,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: C.ok,
+    padding: 22,
+    alignItems: 'center',
+  },
+  verifiedTitle: { color: C.ok, fontSize: 30, fontWeight: '900', letterSpacing: 2 },
+  retakeHint: { color: C.white, fontSize: 13, opacity: 0.8, fontStyle: 'italic' },
   rejectBanner: {
     position: 'absolute',
     top: '42%',

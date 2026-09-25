@@ -33,8 +33,9 @@ If that dies with `EMFILE: too many open files`, that is an OS watcher limit,
 not the app — see [Troubleshooting](#troubleshooting) for the one-line fix and a
 no-sudo fallback.
 
-Scan the QR code with Expo Go. The camera does not work in the iOS Simulator —
-use a real phone, or the web build (see Testing).
+This project needs a **development build** — Expo Go cannot load the native
+MediaPipe module. See [Requires a development build](#requires-a-development-build).
+The camera does not work in the iOS Simulator; use a real phone.
 
 To actually test the matchmaking you need **two devices** (or one phone plus a
 second one running the same dev server). One person taps match, the other gets
@@ -43,54 +44,104 @@ pulled into the room automatically.
 ## The loop
 
 1. Home screen shows a headcount and one button: **I'M SHITTING**.
-2. Tapping it rolls a random hand sign — peace, thumbs up, vulcan salute, etc.
+2. Tapping it rolls a random hand sign — peace, thumbs up, OK, etc.
 3. Camera opens. You photograph the toilet plus the hand sign.
-4. The photo is verified **locally** (see below) and deleted.
+4. Two on-device models check hand, gesture and toilet. The photo is then deleted.
 5. On success you get a 15-minute session and a silly throwaway nickname.
 6. **MATCH ME WITH A STRANGER** pairs you with another live session.
 7. Realtime anonymous chat until the clock runs out.
 8. At 0:00 the session is deleted and everyone goes home.
 
-## About the photo
+## Proof verification
 
-It never leaves the device. There is no storage bucket, no upload, no base64 in
-any table. The flow is: capture → downscale in memory → decode to pixels →
-measure → `delete()` the file. Both the original capture and the downscaled copy
-are removed in a `finally` block, so they go even if verification throws.
+Two on-device MediaPipe models decide whether you get a session. Nothing is
+uploaded, and no external API is called.
 
-### What the local check actually does
+| check | how | fails with |
+|---|---|---|
+| Photo usable | pixel stats, [`proofMath.ts`](src/lib/proofMath.ts) | "too dark", "blank wall", "too bright" |
+| Hand detected | MediaPipe Hand Landmarker, 21 keypoints | "No hand detected" |
+| Correct gesture | landmark geometry, [`gestureClassifier.ts`](src/lib/gesture/gestureClassifier.ts) | "Wrong hand gesture" |
+| Toilet detected | EfficientDet-Lite0, COCO `toilet` class | "No toilet detected" |
 
-`src/lib/proofMath.ts` measures three things and rejects the photo if any fail:
+The cheap pixel check runs first so a black frame does not cost 12 MB of model
+inference.
 
-| Check | Rejects |
-|---|---|
-| mean brightness within 18–245 | black frames, thumb over the lens, photos of a lamp |
-| brightness variation ≥ `max(7, 0.06 × mean)` | blank walls, ceilings, pocket shots |
-| ≥1.5% skin-tone pixels | frames with no hand in them |
+### Gestures
 
-The variation threshold is **relative to brightness on purpose**. Bathrooms are
-dim, dim scenes have genuinely compressed contrast, and a fixed threshold
-rejected real photos taken in bad light. A flat surface scores near zero at any
-brightness, so the ratio separates the two.
+Eight, all classified from finger geometry rather than a gesture model:
 
-`npm run test:proof` runs these thresholds against synthetic frames (black,
-blank, blown out, textured wall, dim-with-hand, etc.) and fails if a tweak
-starts rejecting real-looking photos.
+`peace` ✌️ · `three` · `four` · `palm` 🖐️ · `fist` ✊ · `thumb` 👍 · `ok` 👌 · `point` ☝️
 
-### What it does NOT do
+Finger extension is measured as "is the fingertip further from the wrist than
+its knuckle", which is rotation- and scale-invariant — verified by the tests.
+The one exception is THUMBS_UP, which is *defined* by pointing upward, so it
+deliberately reads image orientation.
 
-**It cannot tell a peace sign from a thumbs up.** `classifyGesture()` in
-`src/lib/proofMath.ts` is a stub that returns `true`.
+`npm run test:gesture` runs 11 unit tests over synthetic hands.
 
-Real per-gesture recognition needs 21-point hand landmarks — MediaPipe Hands or
-a TFLite hand-landmarker — which needs a custom dev build and does not fit in an
-Expo Go prototype. The checks above still block the lazy cheats (black screen,
-pointing at a wall, photographing nothing), but a determined liar can hold up
-any hand at all. To make it real, replace that one function and compare finger
-extension against `challenge.id`; nothing else in the app changes.
+### Models
 
-Also worth knowing: the skin heuristic matches beige and wooden surfaces. It is
-the brightness-variation check that stops a plain beige wall from passing.
+Downloaded once on first launch into the app's document directory, not bundled
+into git or the APK:
+
+- `hand_landmarker.task` (float16) — 7.8 MB
+- `efficientdet_lite0.tflite` (int8, COCO) — 4.6 MB
+
+Note the direction of travel: the **model comes down**, the photo never goes up.
+
+### Privacy
+
+The photo never leaves the device. There is no storage bucket, no upload call,
+no base64 in any table. The flow is capture → downscale → analyse → delete.
+Three files are shredded: the original capture, the 640px working copy, and the
+128px stats copy. All in `finally` blocks, so they go even when a check throws.
+
+On success the server is told only that a session started — `device_id`,
+a throwaway nickname and an expiry. It is not told which gesture was used or
+that a photo ever existed.
+
+### What this does NOT do
+
+- **It is not a security boundary.** Verification is client-side by design for
+  this MVP. A determined person can patch the bundle. Nothing here is trusted
+  for anything that matters.
+- **The toilet detector is generic COCO.** It knows "toilet", not "your toilet",
+  and not "a toilet you are currently using". A photo of any toilet passes, as
+  does a picture of a picture of a toilet.
+- **Gesture classification is geometric.** It reads a clear, front-on hand well.
+  Heavy foreshortening, a hand edge-on to the camera, or partial occlusion will
+  make it return "no clear gesture" and fail the attempt.
+- **THUMBS_UP assumes an upright photo.** Shoot in portrait.
+- **Unverified on real hardware.** The pure logic is unit tested, but the native
+  MediaPipe integration has not been run on a physical device — see the build
+  notes below.
+
+## Requires a development build
+
+Adding native MediaPipe means **Expo Go no longer works**. The app now needs a
+development build.
+
+```bash
+npx expo install --check        # confirm dependencies line up
+npx expo prebuild --clean       # generate android/ and ios/
+npx expo run:android            # build + install on a connected device
+```
+
+For iOS you also need `npx pod-install` and a Mac. Or build in the cloud:
+
+```bash
+npx eas-cli@latest build --profile development --platform android
+```
+
+`android/` and `ios/` are generated (Continuous Native Generation) — never edit
+them by hand; change `app.json` instead. The local module lives in
+[`modules/toilet-vision/`](modules/toilet-vision/) and is autolinked.
+
+The web build still runs, but the camera step cannot: there is no native module
+there, so verification fails closed with "needs a development build". Use
+`EXPO_PUBLIC_SKIP_CAMERA=1` to keep testing chat in a browser.
+
 
 ## Testing it
 
@@ -116,19 +167,22 @@ Open it in **two different browsers** (or one normal + one private window) so
 each gets its own device id, and drive both sides.
 
 Caveat: the home/session/chat screens are confirmed working on web, but the
-**camera step on web is unverified** — it goes through `getUserMedia` and a
-different `expo-image-manipulator` backend than the phone does. If it misbehaves,
-use the `judge()` bypass below to get past it and test everything downstream, and
-do your real camera testing on a phone.
+**proof flow cannot run on web at all** — there is no native MediaPipe module
+there, so verification fails closed with "needs a development build". To test
+chat in a browser,
+set `EXPO_PUBLIC_SKIP_CAMERA=1` to get past it and test everything downstream,
+and do your real camera testing on a phone.
 
 ### On a phone
 
+Expo Go cannot run this any more — see [Requires a development build](#requires-a-development-build).
+
 ```bash
-npx expo start -c
+npx expo run:android      # first time: builds and installs
+npx expo start --dev-client   # afterwards
 ```
 
-Scan with Expo Go. The camera step needs a real device or a browser — it does
-not work in the iOS Simulator.
+The camera step needs a real device; it does not work in the iOS Simulator.
 
 ### Faking a second person
 
@@ -161,22 +215,26 @@ delete from public.sessions where device_id like 'ghost-%';
 - **Session expiry:** drop `SESSION_MINUTES` in [`src/lib/session.ts`](src/lib/session.ts)
   to `0.5`. The client sends an explicit `expires_at`, so that one constant is
   enough — you do not need to touch the schema default.
-- **Skipping the camera** while iterating on later screens: make `judge()` in
-  [`src/lib/proofMath.ts`](src/lib/proofMath.ts) return `{ ok: true, stats }`
-  as its first line. Put it back before you trust any verification result.
+- **Skipping the camera** while iterating on later screens: set
+  `EXPO_PUBLIC_SKIP_CAMERA=1` in `.env` and rebuild. This bypasses proof
+  entirely, so set it back to `0` before you trust any verification result.
 
 ### What to actually check
 
 | | Expect |
 |---|---|
-| Point camera at a dark surface / cover the lens | rejected, "is your thumb on the lens?" |
-| Point at a blank wall | rejected, "that is a blank wall" |
-| Toilet + your hand in frame | accepted, session starts |
+| Cover the lens | rejected at step 1, "is your thumb on the lens?" |
+| Point at a blank wall | rejected at step 1, "that is a blank wall" |
+| Toilet, no hand in frame | ✓ usable, ✗ **No hand detected** |
+| Hand doing the wrong sign | ✓ hand, ✗ **Wrong hand gesture** (names what it saw) |
+| Correct sign, no toilet | ✓ hand, ✓ gesture, ✗ **No toilet detected** |
+| Correct sign + toilet | all four tick, 🚽 VERIFIED, session starts |
 | Two clients, one taps match | **both** land in the chat, the second without tapping anything |
 | Send from either side | appears on the other within a second |
 | Let the clock run out | both sides hit the expired screen, row is deleted |
 
-Note that the gesture itself is not checked — any hand passes. See above.
+Each attempt gets a freshly rolled challenge, and the only image source is the
+camera — there is no gallery picker — so an old photo cannot be reused.
 
 ## Troubleshooting
 
@@ -233,15 +291,19 @@ commented-out `pg_cron` sweeper at the bottom of the schema if the table grows.
 
 ```
 App.tsx                  route state machine + the 15-minute kill timer
-src/lib/proofMath.ts     pure pixel math and thresholds (testable in node)
-src/lib/verify.ts        decode the photo, hand it to proofMath
+src/lib/proofMath.ts     cheap pixel prefilter, thresholds (testable in node)
+src/lib/verify.ts        orchestrates the four checks, shreds every temp file
+src/lib/gesture/         landmark topology + pure gesture classifier
+src/lib/vision/          detector interfaces, model download, MediaPipe impls
+modules/toilet-vision/   local Expo module: MediaPipe Kotlin + Swift
 src/lib/shred.ts         delete temp images off disk
 src/lib/session.ts       sessions, headcount, matchmaking, messages, realtime
 src/lib/challenges.ts    the hand signs
 src/lib/identity.ts      per-install id + throwaway nicknames
 src/screens/             home, challenge, camera, session, chat
 supabase/schema.sql      run this once
-scripts/proof-check.js   threshold regression test
+scripts/proof-check.js   pixel threshold regression test
+scripts/gesture-test.js  gesture classifier unit tests
 ```
 
 Not implemented, on purpose: profiles, friends, notifications, moderation,
