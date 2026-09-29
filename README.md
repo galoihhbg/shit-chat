@@ -11,9 +11,14 @@ Expo + React Native + TypeScript + Supabase.
 **1. Database**
 
 Create a Supabase project, open the SQL editor, paste all of
-[`supabase/schema.sql`](supabase/schema.sql), run it. That creates the two
-tables, the two RPCs, the realtime publications and the (wide open, MVP-only)
-RLS policies.
+[`supabase/schema.sql`](supabase/schema.sql), run it. That creates the three
+tables (`sessions`, `messages`, `games`), the RPCs, the realtime publications
+and the (wide open, MVP-only) RLS policies.
+
+**Already had it running?** Re-run the whole file. It is idempotent —
+`create table if not exists`, `create or replace function`, `drop policy if
+exists` — so existing rows survive, and it is the only way to pick up the
+`games` table and the tic-tac-toe RPCs.
 
 **2. Keys**
 
@@ -49,8 +54,8 @@ pulled into the room automatically.
 4. Two on-device models check hand, gesture and toilet. The photo is then deleted.
 5. On success you get a 15-minute session and a silly throwaway nickname.
 6. **MATCH ME WITH A STRANGER** pairs you with another live session.
-7. Realtime anonymous chat until the clock runs out.
-8. At 0:00 the session is deleted and everyone goes home.
+7. Realtime anonymous chat, with a round of tic-tac-toe if you want one.
+8. At 0:00 the session is deleted and you get a summary you can share.
 
 ## Proof verification
 
@@ -117,6 +122,85 @@ that a photo ever existed.
   MediaPipe integration has not been run on a physical device — see the build
   notes below.
 
+## Playing a game
+
+Chat and tic-tac-toe live in the same screen. The **PLAY** button in the chat
+header swaps the view; **BACK TO CHAT** swaps it back. Both the chat and game
+subscriptions stay mounted the whole time, so messages keep arriving while you
+play and the board keeps up while you type.
+
+Whoever taps PLAY first deals the game; the other side gets
+**🚽 YOU'VE BEEN CHALLENGED** and a red dot on the PLAY button. Asking again
+after a result is the rematch — same call, new board.
+
+### The server is the referee
+
+Every rule lives in [`supabase/schema.sql`](supabase/schema.sql), not in the
+app. `make_move` rejects, in order: an out-of-range cell, an unknown game, a
+finished game, an expired session, a player who is not in this game, a move out
+of turn, and an occupied square. It takes `for update` on the row first, so two
+simultaneous moves serialise instead of both reading the same stale board.
+
+The client mirrors those checks in `canPlay()` purely to avoid a pointless
+round trip. Deleting that mirror would change nothing about what is possible.
+
+`start_game` takes a per-room advisory lock, so both players mashing PLAY at
+the same moment join one game rather than creating two.
+
+The board is nine characters (`XOXXOOOXX`), which makes it one atomic column to
+update and trivial to validate in SQL.
+
+### Session expiry
+
+There is no second timer. The game uses the existing session clock:
+
+- The app's kill timer in [`App.tsx`](App.tsx) ends the session, which unmounts
+  the chat and game and drops both subscriptions.
+- `make_move` and `start_game` both re-check `expires_at > now()`, so a client
+  that missed the clock still cannot play.
+- The TTL comes from `SESSION_MINUTES` in
+  [`src/lib/session.ts`](src/lib/session.ts). Change it there and the game
+  follows.
+
+## Session summary and sharing
+
+When the session ends — clock or early exit — you get a summary: duration,
+people met, games played and won, and a title. Everything is derived from what
+the app already knew; nothing is tracked server side for it.
+
+**SHARE** uses the platform share sheet with plain text. No upload, no image
+host, no SDK. The image-card version is deliberately unimplemented and isolated
+in `renderShareCard()` in
+[`src/lib/share/shareCard.ts`](src/lib/share/shareCard.ts) — rendering a PNG on
+device needs another native dependency, and the text form already works.
+
+## Toilet proof: the replay weakness
+
+The current check is **single-frame**, so it can be beaten by holding a real
+hand in front of a photo of a toilet. Both checks pass because both only ever
+look at one still.
+
+This is known and not fixed in this round. Fixing it properly means temporal
+capture, and adding an untested multi-frame flow on top of a native module that
+has not yet been compiled would put the riskiest part of the app at more risk.
+The pieces, if you want it next:
+
+| file | what changes |
+|---|---|
+| [`src/lib/challenges.ts`](src/lib/challenges.ts) | add `randomChallengeSequence(n)` returning 2–3 gestures |
+| [`src/screens/CameraScreen.tsx`](src/screens/CameraScreen.tsx) | `capture()` takes a burst of 2–3 stills ~700 ms apart, prompting a new gesture between each |
+| [`src/lib/verify.ts`](src/lib/verify.ts) | split the per-frame body of `verifyProof` into `verifyFrame(uri, gesture)`, add `verifyProofSequence(uris, gestures)` |
+| [`src/lib/verify.ts`](src/lib/verify.ts) | cross-frame checks: toilet in **every** frame, gestures match the sequence in order, and the hand landmark centroid actually moves |
+| [`modules/toilet-vision/`](modules/toilet-vision/) | nothing — `detectHands` and `detectObjects` are already per-image |
+
+Worth noting: this needs **no video recording**. A burst of timed stills with a
+changing required gesture defeats photo replay, and reuses the existing
+per-image pipeline unchanged. Video would mean frame extraction and a much
+larger native surface for no extra security here.
+
+The objective would be stopping trivial replay, not perfect anti-cheat. A
+determined person with two phones still gets through.
+
 ## Requires a development build
 
 Adding native MediaPipe means **Expo Go no longer works**. The app now needs a
@@ -148,10 +232,15 @@ there, so verification fails closed with "needs a development build". Use
 ### Without a phone, right now
 
 ```bash
-npm run test:proof     # pins the photo-check thresholds against synthetic frames
-npm run typecheck
+npm test               # typecheck + gesture + tic-tac-toe + stats + pixel checks
+npm run test:schema    # applies schema.sql to a throwaway Postgres (needs docker)
 npx expo-doctor
 ```
+
+`test:schema` is the one that matters most for the game: it plays real moves
+through the real RPCs and asserts that out-of-turn moves, moves by strangers,
+occupied squares, off-board cells, moves after the result, and moves from an
+expired session are all rejected.
 
 ### Without a phone, in a browser
 
@@ -229,6 +318,10 @@ delete from public.sessions where device_id like 'ghost-%';
 | Hand doing the wrong sign | ✓ hand, ✗ **Wrong hand gesture** (names what it saw) |
 | Correct sign, no toilet | ✓ hand, ✓ gesture, ✗ **No toilet detected** |
 | Correct sign + toilet | all four tick, 🚽 VERIFIED, session starts |
+| Tap PLAY on one client | other client shows **YOU'VE BEEN CHALLENGED** |
+| Play a full game | result on both sides, REMATCH deals a fresh board |
+| BACK TO CHAT mid-game | chat still live, messages sent while playing are there |
+| Let the clock run out during a game | both sides land on the summary |
 | Two clients, one taps match | **both** land in the chat, the second without tapping anything |
 | Send from either side | appears on the other within a second |
 | Let the clock run out | both sides hit the expired screen, row is deleted |
@@ -295,15 +388,20 @@ src/lib/proofMath.ts     cheap pixel prefilter, thresholds (testable in node)
 src/lib/verify.ts        orchestrates the four checks, shreds every temp file
 src/lib/gesture/         landmark topology + pure gesture classifier
 src/lib/vision/          detector interfaces, model download, MediaPipe impls
+src/lib/game/            tic-tac-toe rules mirror, RPC wrapper, realtime hook
+src/lib/share/           session stats maths + share sheet
 modules/toilet-vision/   local Expo module: MediaPipe Kotlin + Swift
 src/lib/shred.ts         delete temp images off disk
 src/lib/session.ts       sessions, headcount, matchmaking, messages, realtime
 src/lib/challenges.ts    the hand signs
 src/lib/identity.ts      per-install id + throwaway nicknames
-src/screens/             home, challenge, camera, session, chat
+src/screens/             home, challenge, camera, session, chat, game, summary
 supabase/schema.sql      run this once
 scripts/proof-check.js   pixel threshold regression test
 scripts/gesture-test.js  gesture classifier unit tests
+scripts/ttt-test.js      tic-tac-toe board + turn logic tests
+scripts/stats-test.js    session summary + share text tests
+scripts/test-schema.sh   matchmaking and game rules, against real Postgres
 ```
 
 Not implemented, on purpose: profiles, friends, notifications, moderation,

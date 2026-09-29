@@ -46,6 +46,12 @@
           }
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "df3d7ea0-33c3-43f3-97c0-17933ed1268d"
+      }
+    },
+    "owner": "galoihhbg"
   }
 }

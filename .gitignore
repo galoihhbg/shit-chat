@@ -51,3 +51,9 @@ dist
 
 # gesture test output
 .gesture-tmp
+
+# ttt test output
+.ttt-tmp
+
+# stats test output
+.stats-tmp

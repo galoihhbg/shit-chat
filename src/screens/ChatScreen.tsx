@@ -10,6 +10,9 @@ import {
   View,
 } from 'react-native';
 import { formatClock, useCountdown } from '../components/Countdown';
+import { useTicTacToe } from '../lib/game/useTicTacToe';
+import type { Outcome } from '../lib/game/ttt';
+import { GamePanel } from './GamePanel';
 import {
   fetchMessages,
   sendMessage,
@@ -24,12 +27,32 @@ type Props = {
   roomId: string;
   partnerNickname: string;
   onLeave: () => void;
+  /** Reported to the session summary. */
+  onGameFinished?: (outcome: Outcome) => void;
 };
 
-export function ChatScreen({ session, roomId, partnerNickname, onLeave }: Props) {
+type Mode = 'chat' | 'game';
+
+export function ChatScreen({
+  session,
+  roomId,
+  partnerNickname,
+  onLeave,
+  onGameFinished,
+}: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [mode, setMode] = useState<Mode>('chat');
   const listRef = useRef<FlatList<ChatMessage>>(null);
+
+  // Mounted for the whole match, not just while the board is on screen, so
+  // messages keep arriving while you play and the game keeps up while you chat.
+  const ttt = useTicTacToe(session.id, roomId, { onFinished: onGameFinished });
+
+  const openGame = useCallback(() => {
+    ttt.acknowledge();
+    setMode('game');
+  }, [ttt]);
 
   const secondsLeft = useCountdown(session.expiresAt);
   const urgent = secondsLeft <= 60;
@@ -81,8 +104,32 @@ export function ChatScreen({ session, roomId, partnerNickname, onLeave }: Props)
           <Text style={styles.partner}>{partnerNickname}</Text>
           <Text style={styles.partnerSub}>is also on the toilet</Text>
         </View>
+        <Pressable
+          onPress={mode === 'chat' ? openGame : () => setMode('chat')}
+          style={styles.modeButton}
+        >
+          <Text style={styles.modeLabel}>{mode === 'chat' ? 'PLAY' : 'CHAT'}</Text>
+          {mode === 'chat' && ttt.incomingChallenge && <View style={styles.dot} />}
+        </Pressable>
         <Text style={[styles.clock, urgent && styles.clockUrgent]}>{formatClock(secondsLeft)}</Text>
       </View>
+
+      {mode === 'chat' && ttt.incomingChallenge && (
+        <Pressable onPress={openGame} style={styles.challenge}>
+          <Text style={styles.challengeTitle}>{'\uD83D\uDEBD'} YOU'VE BEEN CHALLENGED</Text>
+          <Text style={styles.challengeSub}>{partnerNickname} wants to play. Tap to accept.</Text>
+        </Pressable>
+      )}
+
+      {mode === 'game' ? (
+        <GamePanel
+          sessionId={session.id}
+          partnerNickname={partnerNickname}
+          ttt={ttt}
+          onBackToChat={() => setMode('chat')}
+        />
+      ) : (
+        <>
 
       <FlatList
         ref={listRef}
@@ -121,6 +168,9 @@ export function ChatScreen({ session, roomId, partnerNickname, onLeave }: Props)
         </Pressable>
       </View>
 
+        </>
+      )}
+
       <Pressable onPress={onLeave} style={styles.leave}>
         <Text style={styles.leaveLabel}>flush and leave</Text>
       </Pressable>
@@ -140,6 +190,36 @@ const styles = StyleSheet.create({
     borderBottomColor: C.panel,
   },
   headerText: { flex: 1 },
+  modeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: C.gold,
+    marginRight: 12,
+  },
+  modeLabel: { color: C.gold, fontSize: 13, fontWeight: '900', letterSpacing: 1 },
+  dot: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: C.danger,
+  },
+  challenge: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: C.panel,
+    borderWidth: 2,
+    borderColor: C.gold,
+    gap: 4,
+  },
+  challengeTitle: { color: C.gold, fontSize: 15, fontWeight: '900', letterSpacing: 1 },
+  challengeSub: { color: C.dim, fontSize: 13 },
   partner: { color: C.gold, fontSize: 20, fontWeight: '900' },
   partnerSub: { color: C.dim, fontSize: 12, fontStyle: 'italic' },
   clock: { color: C.ok, fontSize: 22, fontWeight: '900', fontVariant: ['tabular-nums'] },

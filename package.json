@@ -37,7 +37,9 @@
     "web:preview": "npm run web:build && npm run web:serve",
     "test:schema": "bash scripts/test-schema.sh",
     "test:gesture": "tsc src/lib/gesture/gestureClassifier.ts src/lib/gesture/landmarks.ts --ignoreConfig --outDir .gesture-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/gesture-test.js",
-    "test": "npm run typecheck && npm run test:gesture && npm run test:proof"
+    "test": "npm run typecheck && npm run test:gesture && npm run test:ttt && npm run test:stats && npm run test:proof",
+    "test:ttt": "tsc src/lib/game/ttt.ts --ignoreConfig --outDir .ttt-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/ttt-test.js",
+    "test:stats": "tsc src/lib/share/sessionStats.ts --ignoreConfig --outDir .stats-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/stats-test.js"
   },
   "private": true
 }
