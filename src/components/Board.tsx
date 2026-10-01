@@ -31,6 +31,7 @@ export function Board({ board, highlight, playable, onPlay, disabled }: Props) {
         return (
           <Pressable
             key={i}
+            testID={`cell-${i}`}
             onPress={() => canTap && onPlay?.(i)}
             disabled={!canTap}
             style={({ pressed }) => [

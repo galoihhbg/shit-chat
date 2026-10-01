@@ -157,7 +157,7 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
 
-    return watchSession(session.id, (row) => {
+    return watchSession(session.id, ({ session: row, previousRoomId }) => {
       const current = screenRef.current;
 
       if (row.roomId && current.name === 'lobby') {
@@ -165,7 +165,12 @@ export default function App() {
         return;
       }
 
-      if (!row.roomId && current.name === 'room') {
+      // Only an actual transition out of a room counts as the partner
+      // leaving. Without the `previousRoomId` check, any unrelated update
+      // that happens to carry a null room -- raising a hand to search, for
+      // instance -- reads as "they left" and bounces us out of a room we
+      // just joined.
+      if (!row.roomId && previousRoomId && current.name === 'room') {
         setScreen({ name: 'lobby' });
         setNotice('They left the room. Find someone else.');
       }

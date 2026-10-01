@@ -284,8 +284,21 @@ there, so verification fails closed with "needs a development build". Use
 ```bash
 npm test               # typecheck + gesture + tic-tac-toe + stats + pixel checks
 npm run test:schema    # applies schema.sql to a throwaway Postgres (needs docker)
+npm run test:flow      # drives two real browsers through the whole loop
 npx expo-doctor
 ```
+
+`test:flow` needs the web build already serving (`npm run web:build && npm run
+web:serve`) and a Chrome on the machine. It opens two browser contexts, matches
+them, chats, plays a game, leaves the room, re-matches and ends the session,
+asserting ~20 things along the way.
+
+It earns its keep: a bug once survived typechecking, 42 schema checks and 28
+unit tests, because it only appeared when two clients raced. `find_match` wrote
+to a session row twice — `seeking = true` first, then the room — and realtime
+shipped both. The client read the first write, whose room was still null, as
+*"my partner left"*, and bounced the second player straight back out of the
+room they had just joined. Nothing but two live clients could have caught it.
 
 `test:schema` is the one that matters most: it plays real moves through the
 real RPCs and asserts that out-of-turn moves, moves by strangers, occupied
@@ -458,6 +471,7 @@ scripts/gesture-test.js  gesture classifier unit tests
 scripts/ttt-test.js      tic-tac-toe board + turn logic tests
 scripts/stats-test.js    session summary + share text tests
 scripts/test-schema.sh   matchmaking and game rules, against real Postgres
+scripts/flow-test.js     two browsers through the whole loop, against real Supabase
 ```
 
 Not implemented, on purpose: profiles, friends, notifications, moderation,

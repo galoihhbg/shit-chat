@@ -92,10 +92,14 @@ begin
   -- function is microseconds long and there are tens of users, not millions.
   perform pg_advisory_xact_lock(hashtextextended('shitchat:matchmaking', 0));
 
-  -- Calling this IS the request to be matched, so raise my own hand first.
-  -- It stays raised between polls, which is how the other side finds me.
-  update public.sessions s set seeking = true where s.id = p_session;
-
+  -- Look for someone already waiting BEFORE raising my own hand.
+  --
+  -- Order matters for more than tidiness. Writing `seeking = true` and then
+  -- the room is two updates to my row, and realtime ships both. The first one
+  -- still has room_id null, so a client that had already entered the room
+  -- (from this function's own reply) saw it as "my partner left" and bounced
+  -- itself back to the lobby. Matching now touches the row once.
+  --
   -- Plain `for update`, not `skip locked`: with matchmaking serialised there
   -- is no contention to skip, and skipping would silently lose a valid
   -- partner rather than waiting a moment for them.
@@ -109,7 +113,10 @@ begin
   limit 1
   for update;
 
+  -- Nobody waiting. Raise my hand and leave it raised between polls, which is
+  -- how the next person to ask will find me.
   if not found then
+    update public.sessions s set seeking = true where s.id = p_session;
     return;
   end if;
 

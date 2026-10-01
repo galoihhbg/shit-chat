@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "playwright-core": "^1.63.0",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -39,7 +40,8 @@
     "test:gesture": "tsc src/lib/gesture/gestureClassifier.ts src/lib/gesture/landmarks.ts --ignoreConfig --outDir .gesture-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/gesture-test.js",
     "test": "npm run typecheck && npm run test:gesture && npm run test:ttt && npm run test:stats && npm run test:proof",
     "test:ttt": "tsc src/lib/game/ttt.ts --ignoreConfig --outDir .ttt-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/ttt-test.js",
-    "test:stats": "tsc src/lib/share/sessionStats.ts --ignoreConfig --outDir .stats-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/stats-test.js"
+    "test:stats": "tsc src/lib/share/sessionStats.ts --ignoreConfig --outDir .stats-tmp --module commonjs --target es2020 --skipLibCheck && node --test scripts/stats-test.js",
+    "test:flow": "node scripts/flow-test.js"
   },
   "private": true
 }

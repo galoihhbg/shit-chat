@@ -110,7 +110,13 @@ export async function leaveRoom(sessionId: string): Promise<ToiletSession> {
  * my partner walking out (room_id disappears). The caller decides which is
  * which -- this just reports the row.
  */
-export function watchSession(sessionId: string, onChange: (s: ToiletSession) => void) {
+export type SessionChange = {
+  session: ToiletSession;
+  /** The room this row was in before the update, if any. */
+  previousRoomId: string | null;
+};
+
+export function watchSession(sessionId: string, onChange: (change: SessionChange) => void) {
   const channel = supabase
     .channel(`session:${sessionId}`)
     .on(
@@ -118,7 +124,11 @@ export function watchSession(sessionId: string, onChange: (s: ToiletSession) => 
       { event: 'UPDATE', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` },
       (payload) => {
         const row = payload.new as SessionRow;
-        if (row?.id) onChange(toSession(row));
+        if (!row?.id) return;
+        // `replica identity full` gives us the previous row, which is the only
+        // way to tell "the room was cleared" from "the room was never set".
+        const before = payload.old as Partial<SessionRow> | undefined;
+        onChange({ session: toSession(row), previousRoomId: before?.room_id ?? null });
       }
     )
     .subscribe();
