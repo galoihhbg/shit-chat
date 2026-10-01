@@ -17,6 +17,11 @@ create table if not exists public.sessions (
   expires_at       timestamptz not null default now() + interval '15 minutes'
 );
 
+-- Added after launch: you are only matchable once you ask to be. Without
+-- this, find_match grabbed anyone idle in the lobby and yanked them into a
+-- room they never agreed to join.
+alter table public.sessions add column if not exists seeking boolean not null default false;
+
 create index if not exists sessions_expires_at_idx on public.sessions (expires_at);
 create index if not exists sessions_room_id_idx    on public.sessions (room_id);
 
@@ -77,10 +82,15 @@ begin
     return;
   end if;
 
+  -- Calling this IS the request to be matched, so raise my own hand first.
+  -- It stays raised between polls, which is how the other side finds me.
+  update public.sessions s set seeking = true where s.id = p_session;
+
   select s.* into v_partner
   from public.sessions s
   where s.id <> p_session
     and s.room_id is null
+    and s.seeking = true
     and s.expires_at > now()
   order by random()
   limit 1
@@ -92,12 +102,13 @@ begin
 
   v_room := gen_random_uuid();
 
+  -- Matched: both hands come down.
   update public.sessions s
-     set room_id = v_room, partner_nickname = v_partner.nickname
+     set room_id = v_room, partner_nickname = v_partner.nickname, seeking = false
    where s.id = v_me.id;
 
   update public.sessions s
-     set room_id = v_room, partner_nickname = v_me.nickname
+     set room_id = v_room, partner_nickname = v_me.nickname, seeking = false
    where s.id = v_partner.id;
 
   return query select v_room, v_partner.nickname;

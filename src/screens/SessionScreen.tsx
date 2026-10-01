@@ -66,7 +66,9 @@ export function SessionScreen({ session, onMatched, onFlush }: Props) {
         if (match) {
           land(match.roomId, match.partnerNickname);
         } else {
-          setNote('Nobody else is available. Holding the door open...');
+          // Matching is opt-in on both sides, so "nobody available" usually
+          // means the other person simply has not tapped yet.
+          setNote('Waiting for someone else to tap MATCH. Both sides have to ask.');
         }
       } catch {
         if (alive) setNote('Matchmaking hiccup. Still trying.');
@@ -98,7 +100,7 @@ export function SessionScreen({ session, onMatched, onFlush }: Props) {
             ? 'counting...'
             : others === 0
               ? 'You are the only one. Bleak.'
-              : `${others} other ${others === 1 ? 'person' : 'people'} nearby-ish`}
+              : `${others} other ${others === 1 ? 'person' : 'people'} on the toilet`}
         </Text>
       </View>
 

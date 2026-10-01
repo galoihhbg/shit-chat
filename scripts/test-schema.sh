@@ -18,9 +18,12 @@ cleanup
 
 echo "starting postgres..."
 docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=pg postgres:16-alpine >/dev/null
+# pg_isready is not enough: during initdb the server comes up briefly on the
+# unix socket and then restarts, so a probe can pass and the next command still
+# fail. Wait until an actual query succeeds.
 ready=0
 for _ in $(seq 1 90); do
-  if docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then ready=1; break; fi
+  if docker exec "$CONTAINER" psql -U postgres -q -c 'select 1' >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 if [ "$ready" != "1" ]; then
@@ -53,13 +56,26 @@ run_sql() {
 echo "testing matchmaking..."
 run_sql <<'SQL'
 truncate public.sessions, public.messages, public.games;
-insert into public.sessions (device_id, nickname) values ('devA','A'), ('devB','B');
+insert into public.sessions (device_id, nickname) values ('devA','A'), ('devB','B'), ('devC','C');
 
-select 'matched:' || count(*) from public.find_match((select id from public.sessions where device_id='devA'));
+-- Asking first when nobody else has asked matches nobody, but raises my hand.
+select 'first_ask:' || count(*) from public.find_match((select id from public.sessions where device_id='devA'));
+select 'now_seeking:' || count(*) from public.sessions where device_id='devA' and seeking;
+
+-- The second person to ask finds the first.
+select 'second_ask:' || count(*) from public.find_match((select id from public.sessions where device_id='devB'));
 
 select 'paired:' || count(*) from public.sessions
  where room_id = (select room_id from public.sessions where device_id='devA')
    and room_id is not null;
+
+-- C never asked, so C is still sitting in the lobby, unmatched and untouched.
+select 'bystander_free:' || count(*) from public.sessions
+ where device_id='devC' and room_id is null and not seeking;
+
+-- Matching lowers both hands.
+select 'hands_down:' || count(*) from public.sessions
+ where device_id in ('devA','devB') and not seeking;
 
 select 'idempotent:' || count(*) from public.find_match((select id from public.sessions where device_id='devA'));
 
@@ -67,8 +83,9 @@ truncate public.sessions;
 insert into public.sessions (device_id, nickname) values ('solo','S');
 select 'alone:' || count(*) from public.find_match((select id from public.sessions where device_id='solo'));
 
-insert into public.sessions (device_id, nickname, expires_at)
-values ('dead','D', now() - interval '1 minute');
+-- An expired session is no partner, even with its hand up.
+insert into public.sessions (device_id, nickname, expires_at, seeking)
+values ('dead','D', now() - interval '1 minute', true);
 select 'expired_ignored:' || count(*) from public.find_match((select id from public.sessions where device_id='solo'));
 
 select 'headcount:' || public.active_count();
@@ -193,8 +210,12 @@ expect() {
 }
 
 # matchmaking
-expect "matched:1"
+expect "first_ask:0"
+expect "now_seeking:1"
+expect "second_ask:1"
 expect "paired:2"
+expect "bystander_free:1"
+expect "hands_down:2"
 expect "idempotent:1"
 expect "alone:0"
 expect "expired_ignored:0"

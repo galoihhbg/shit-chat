@@ -53,7 +53,8 @@ pulled into the room automatically.
 3. Camera opens. You photograph the toilet plus the hand sign.
 4. Two on-device models check hand, gesture and toilet. The photo is then deleted.
 5. On success you get a 15-minute session and a silly throwaway nickname.
-6. **MATCH ME WITH A STRANGER** pairs you with another live session.
+6. **MATCH ME WITH A STRANGER** — both sides have to tap it. Being on the
+   toilet does not make you matchable; asking does.
 7. Realtime anonymous chat, with a round of tic-tac-toe if you want one.
 8. At 0:00 the session is deleted and you get a summary you can share.
 
@@ -322,7 +323,8 @@ delete from public.sessions where device_id like 'ghost-%';
 | Play a full game | result on both sides, REMATCH deals a fresh board |
 | BACK TO CHAT mid-game | chat still live, messages sent while playing are there |
 | Let the clock run out during a game | both sides land on the summary |
-| Two clients, one taps match | **both** land in the chat, the second without tapping anything |
+| One client taps match, the other does not | nothing happens — matching is opt-in on both sides |
+| Both clients tap match | **both** land in the chat |
 | Send from either side | appears on the other within a second |
 | Let the clock run out | both sides hit the expired screen, row is deleted |
 
