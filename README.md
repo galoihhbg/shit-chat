@@ -125,6 +125,24 @@ that a photo ever existed.
   MediaPipe integration has not been run on a physical device — see the build
   notes below.
 
+## Matchmaking runs one at a time
+
+`find_match` takes a global advisory lock before doing anything.
+
+This is not premature caution. Without it, two people tapping MATCH at the same
+moment both ended up back in the lobby: each raised its own hand first — an
+`update` that locks its own row — and then `for update skip locked` made each
+one skip the other as "busy". Both returned empty.
+
+Serialising the whole function is the honest fix at this scale. It is
+microseconds long and there are tens of users, not millions. The partner select
+is now a plain `for update`: with matchmaking serialised there is no contention
+to skip, and skipping would silently lose a valid partner rather than waiting a
+moment for them.
+
+`concurrent_match` in `npm run test:schema` reproduces it, by holding the lock
+in one connection while another tries to match. It fails against the old code.
+
 ## Two lifecycles
 
 Leaving someone is not the same thing as finishing your shit, so these are
@@ -269,10 +287,11 @@ npm run test:schema    # applies schema.sql to a throwaway Postgres (needs docke
 npx expo-doctor
 ```
 
-`test:schema` is the one that matters most for the game: it plays real moves
-through the real RPCs and asserts that out-of-turn moves, moves by strangers,
-occupied squares, off-board cells, moves after the result, and moves from an
-expired session are all rejected.
+`test:schema` is the one that matters most: it plays real moves through the
+real RPCs and asserts that out-of-turn moves, moves by strangers, occupied
+squares, off-board cells, moves after the result, and moves from an expired
+session are all rejected. It also runs two matchmaking calls against each other
+on separate connections, because that race is not theoretical — see below.
 
 ### Without a phone, in a browser
 

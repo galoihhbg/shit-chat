@@ -82,10 +82,23 @@ begin
     return;
   end if;
 
+  -- Matchmaking runs one at a time, globally.
+  --
+  -- Without this, two people tapping MATCH at the same moment both failed:
+  -- each raised its own hand first, which locks its own row, and then
+  -- `for update skip locked` made each one skip the other as "busy". Both
+  -- returned empty and both were left in the lobby having to tap again.
+  -- Serialising the whole thing is the honest fix at this scale -- the
+  -- function is microseconds long and there are tens of users, not millions.
+  perform pg_advisory_xact_lock(hashtextextended('shitchat:matchmaking', 0));
+
   -- Calling this IS the request to be matched, so raise my own hand first.
   -- It stays raised between polls, which is how the other side finds me.
   update public.sessions s set seeking = true where s.id = p_session;
 
+  -- Plain `for update`, not `skip locked`: with matchmaking serialised there
+  -- is no contention to skip, and skipping would silently lose a valid
+  -- partner rather than waiting a moment for them.
   select s.* into v_partner
   from public.sessions s
   where s.id <> p_session
@@ -94,7 +107,7 @@ begin
     and s.expires_at > now()
   order by random()
   limit 1
-  for update skip locked;
+  for update;
 
   if not found then
     return;

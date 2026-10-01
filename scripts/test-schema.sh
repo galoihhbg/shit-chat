@@ -290,6 +290,38 @@ begin
 end $$;
 SQL
 
+echo "testing concurrent match..."
+# Two people tapping MATCH at the same moment used to leave BOTH in the lobby:
+# each locked its own row raising its hand, then `for update skip locked` made
+# each skip the other as busy. Hold a lock on A's row while B matches, which is
+# exactly that situation, and require B to still find A.
+docker exec -i "$CONTAINER" psql -U postgres -q -t -A >/dev/null 2>&1 <<'SQL'
+truncate public.sessions, public.messages, public.games;
+insert into public.sessions (device_id, nickname) values ('devA','A'), ('devB','B');
+SQL
+
+# The contender must be inside find_match itself, so it holds the matchmaking
+# lock -- that is what the second caller has to wait for. (Setting `seeking` in
+# a plain uncommitted transaction proves nothing: the other session cannot see
+# it yet, so finding nobody would be correct.)
+docker exec -i "$CONTAINER" psql -U postgres -q -t -A >/dev/null 2>&1 <<'SQL' &
+begin;
+select * from public.find_match((select id from public.sessions where device_id='devA'));
+select pg_sleep(3);
+commit;
+SQL
+CONTENDER=$!
+sleep 1
+run_sql <<'SQL'
+select 'concurrent_match:' || count(*)
+  from public.find_match((select id from public.sessions where device_id='devB'));
+SQL
+wait "$CONTENDER" 2>/dev/null || true
+
+run_sql <<'SQL'
+select 'concurrent_paired:' || count(*) from public.sessions where room_id is not null;
+SQL
+
 FAILED=0
 expect() {
   if grep -qx "$1" "$OUT"; then
@@ -345,6 +377,10 @@ expect "rematched_after_leaving:2"
 expect "new_room:1"
 expect "leave_twice_ok:1"
 expect "finished_game_kept:won"
+
+# concurrency
+expect "concurrent_match:1"
+expect "concurrent_paired:2"
 
 if [ "$SQL_ERRORS" = "1" ]; then FAILED=1; fi
 if [ "$FAILED" = "1" ]; then
