@@ -29,7 +29,9 @@ export function toGame(row: GameRow): TttGame {
     playerO: row.player_o,
     board: row.board,
     turn: (row.turn === 'O' ? 'O' : 'X') as Mark,
-    status: (['active', 'won', 'draw'].includes(row.status) ? row.status : 'active') as GameStatus,
+    status: (['active', 'won', 'draw', 'abandoned'].includes(row.status)
+      ? row.status
+      : 'active') as GameStatus,
     winner: row.winner === 'X' || row.winner === 'O' ? row.winner : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

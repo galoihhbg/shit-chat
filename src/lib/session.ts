@@ -89,8 +89,28 @@ export async function findMatch(sessionId: string): Promise<MatchResult> {
   return { roomId: row.room_id, partnerNickname: row.partner_nickname ?? 'Someone' };
 }
 
-/** Fires when somebody else drags me into a room. */
-export function watchForMatch(sessionId: string, onMatched: (s: ToiletSession) => void) {
+/**
+ * Leave the current room but stay on the toilet.
+ *
+ * Clears the room on both sides and abandons any game still running there.
+ * The session row itself survives, so the clock keeps going and no
+ * re-verification is needed.
+ */
+export async function leaveRoom(sessionId: string): Promise<ToiletSession> {
+  const { data, error } = await supabase.rpc('leave_room', { p_session: sessionId });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return toSession(row as SessionRow);
+}
+
+/**
+ * Watch my own session row.
+ *
+ * Two things arrive this way: somebody matching with me (room_id appears) and
+ * my partner walking out (room_id disappears). The caller decides which is
+ * which -- this just reports the row.
+ */
+export function watchSession(sessionId: string, onChange: (s: ToiletSession) => void) {
   const channel = supabase
     .channel(`session:${sessionId}`)
     .on(
@@ -98,7 +118,7 @@ export function watchForMatch(sessionId: string, onMatched: (s: ToiletSession) =
       { event: 'UPDATE', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` },
       (payload) => {
         const row = payload.new as SessionRow;
-        if (row?.room_id) onMatched(toSession(row));
+        if (row?.id) onChange(toSession(row));
       }
     )
     .subscribe();

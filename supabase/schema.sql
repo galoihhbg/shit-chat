@@ -132,13 +132,20 @@ create table if not exists public.games (
   player_o   uuid        not null,
   board      text        not null default '---------' check (char_length(board) = 9),
   turn       text        not null default 'X'         check (turn in ('X', 'O')),
-  status     text        not null default 'active'    check (status in ('active', 'won', 'draw')),
+  status     text        not null default 'active'    check (status in ('active', 'won', 'draw', 'abandoned')),
   winner     text                                     check (winner in ('X', 'O')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists games_room_idx on public.games (room_id, created_at desc);
+
+-- Widen the status check on databases created before 'abandoned' existed.
+-- `create table if not exists` above leaves an existing table alone, so this
+-- is how the constraint catches up.
+alter table public.games drop constraint if exists games_status_check;
+alter table public.games add constraint games_status_check
+  check (status in ('active', 'won', 'draw', 'abandoned'));
 
 -- Which symbol, if any, owns a completed line.
 create or replace function public.ttt_winner(p_board text)
@@ -308,6 +315,57 @@ begin
   returning * into v_game;
 
   return v_game;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Leave the current room, keeping the toilet session alive.
+--
+-- This is the whole point of the session/room split: the session row survives,
+-- only its room is cleared, so the user drops back to the lobby without
+-- re-verifying and the 15 minute clock keeps running.
+--
+-- Both sides are returned to the lobby. The partner finds out through the
+-- realtime UPDATE on their own session row -- there is nobody left to talk to,
+-- so leaving them sitting in a dead room would be worse than moving them.
+-- ---------------------------------------------------------------------------
+create or replace function public.leave_room(p_session uuid)
+returns public.sessions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_me   public.sessions%rowtype;
+  v_room uuid;
+begin
+  select s.* into v_me from public.sessions s where s.id = p_session;
+
+  if not found then
+    raise exception 'That session is gone.' using errcode = 'P0001';
+  end if;
+
+  v_room := v_me.room_id;
+
+  -- Already in the lobby. Nothing to do, and no error either.
+  if v_room is null then
+    return v_me;
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(v_room::text, 0));
+
+  -- Anything still being played in there is over now. Finished games keep
+  -- their result; only a live one is abandoned.
+  update public.games g
+     set status = 'abandoned', updated_at = now()
+   where g.room_id = v_room and g.status = 'active';
+
+  update public.sessions s
+     set room_id = null, partner_nickname = null, seeking = false
+   where s.room_id = v_room;
+
+  select s.* into v_me from public.sessions s where s.id = p_session;
+  return v_me;
 end;
 $$;
 

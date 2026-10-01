@@ -2,16 +2,18 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { BigButton } from '../components/BigButton';
 import { formatClock, useCountdown } from '../components/Countdown';
-import { findMatch, getActiveCount, watchForMatch, type ToiletSession } from '../lib/session';
+import { findMatch, getActiveCount, type ToiletSession } from '../lib/session';
 import { C } from '../theme';
 
 type Props = {
   session: ToiletSession;
+  /** Shown after leaving a room, or after a partner walked out. */
+  notice?: string | null;
   onMatched: (roomId: string, partnerNickname: string) => void;
-  onFlush: () => void;
+  onDone: () => void;
 };
 
-export function SessionScreen({ session, onMatched, onFlush }: Props) {
+export function SessionScreen({ session, notice, onMatched, onDone }: Props) {
   const [count, setCount] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
   const [note, setNote] = useState('');
@@ -47,12 +49,8 @@ export function SessionScreen({ session, onMatched, onFlush }: Props) {
     };
   }, []);
 
-  // Somebody else may match with us first.
-  useEffect(() => {
-    return watchForMatch(session.id, (updated) => {
-      if (updated.roomId) land(updated.roomId, updated.partnerNickname ?? 'Someone');
-    });
-  }, [session.id, land]);
+  // Being matched by somebody else arrives through App's session-row
+  // subscription, which stays up across both the lobby and a room.
 
   // While searching, keep asking. Someone will sit down eventually.
   useEffect(() => {
@@ -88,6 +86,8 @@ export function SessionScreen({ session, onMatched, onFlush }: Props) {
 
   return (
     <View style={styles.root}>
+      {!!notice && <Text style={styles.notice}>{notice}</Text>}
+
       <View style={styles.block}>
         <Text style={styles.status}>SESSION ACTIVE</Text>
         <Text style={[styles.clock, urgent && styles.clockUrgent]}>{formatClock(secondsLeft)}</Text>
@@ -111,7 +111,7 @@ export function SessionScreen({ session, onMatched, onFlush }: Props) {
           busy={searching}
         />
         {searching && !!note && <Text style={styles.note}>{note}</Text>}
-        <BigButton label="flush and leave" tone="ghost" onPress={onFlush} />
+        <BigButton label={'\uD83D\uDEBD  I\'M DONE'} tone="ghost" onPress={onDone} />
       </View>
     </View>
   );
@@ -127,4 +127,13 @@ const styles = StyleSheet.create({
   headcount: { color: C.white, fontSize: 17, textAlign: 'center' },
   actions: { gap: 12 },
   note: { color: C.dim, fontSize: 13, textAlign: 'center', fontStyle: 'italic' },
+  notice: {
+    color: C.gold,
+    fontSize: 14,
+    textAlign: 'center',
+    backgroundColor: C.panel,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
 });

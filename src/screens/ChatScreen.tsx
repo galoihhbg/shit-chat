@@ -26,7 +26,10 @@ type Props = {
   session: ToiletSession;
   roomId: string;
   partnerNickname: string;
-  onLeave: () => void;
+  /** Leave this conversation, stay on the toilet. */
+  onLeaveRoom: () => void;
+  /** End the whole toilet session. */
+  onDone: () => void;
   /** Reported to the session summary. */
   onGameFinished?: (outcome: Outcome) => void;
 };
@@ -37,7 +40,8 @@ export function ChatScreen({
   session,
   roomId,
   partnerNickname,
-  onLeave,
+  onLeaveRoom,
+  onDone,
   onGameFinished,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -171,9 +175,14 @@ export function ChatScreen({
         </>
       )}
 
-      <Pressable onPress={onLeave} style={styles.leave}>
-        <Text style={styles.leaveLabel}>flush and leave</Text>
-      </Pressable>
+      <View style={styles.exits}>
+        <Pressable onPress={onLeaveRoom} style={styles.exit} hitSlop={8}>
+          <Text style={styles.leaveRoom}>{'\uD83D\uDEAA'}  Leave Room</Text>
+        </Pressable>
+        <Pressable onPress={onDone} style={styles.exit} hitSlop={8}>
+          <Text style={styles.done}>{'\uD83D\uDEBD'}  I'm Done</Text>
+        </Pressable>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -251,6 +260,16 @@ const styles = StyleSheet.create({
   send: { paddingHorizontal: 14, paddingVertical: 14 },
   sendLabel: { color: C.gold, fontSize: 15, fontWeight: '900', letterSpacing: 1 },
   sendDisabled: { opacity: 0.35 },
-  leave: { alignItems: 'center', paddingVertical: 12 },
-  leaveLabel: { color: C.dim, fontSize: 13, textDecorationLine: 'underline' },
+  exits: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  exit: { paddingVertical: 6, paddingHorizontal: 10 },
+  // Leaving a room is the ordinary action; ending the session is the heavier
+  // one, so only the latter is tinted as a way out of the app.
+  leaveRoom: { color: C.white, fontSize: 14, fontWeight: '700' },
+  done: { color: C.dim, fontSize: 14, fontWeight: '700' },
 });

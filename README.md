@@ -56,7 +56,9 @@ pulled into the room automatically.
 6. **MATCH ME WITH A STRANGER** — both sides have to tap it. Being on the
    toilet does not make you matchable; asking does.
 7. Realtime anonymous chat, with a round of tic-tac-toe if you want one.
-8. At 0:00 the session is deleted and you get a summary you can share.
+8. **🚪 Leave Room** drops you back to the lobby to find someone else. The
+   toilet session, its clock and its stats all keep running.
+9. **🚽 I'm Done** ends the session and shows a summary covering every room.
 
 ## Proof verification
 
@@ -122,6 +124,35 @@ that a photo ever existed.
 - **Unverified on real hardware.** The pure logic is unit tested, but the native
   MediaPipe integration has not been run on a physical device — see the build
   notes below.
+
+## Two lifecycles
+
+Leaving someone is not the same thing as finishing your shit, so these are
+separate:
+
+| | toilet session | room |
+|---|---|---|
+| starts | verification passes | a match is made |
+| ends | clock expires, or **I'm Done** | **Leave Room**, partner leaves, or session ends |
+| how many | one per visit | as many as you like |
+
+A session can contain several rooms. Leaving one does **not** destroy the
+session row, so the clock keeps running, stats keep accumulating, and you are
+never asked to photograph a toilet twice in one sitting.
+
+In the schema, `sessions.room_id` is the join between the two. `leave_room`
+clears it — along with `partner_nickname` and `seeking` — and abandons any
+game still running there. The session row itself is untouched, which is
+exactly what `session_survives` and `clock_untouched` assert in
+`npm run test:schema`.
+
+Both sides return to the lobby: there is nobody left to talk to, so leaving
+the other person sitting in a dead room would be worse than moving them. They
+find out through the realtime UPDATE on their own session row and get
+*"They left the room. Find someone else."*
+
+**🚽 I'm Done** confirms first, then ends the session and shows the summary.
+**🚪 Leave Room** does not confirm — it is the lightweight action.
 
 ## Playing a game
 
@@ -323,6 +354,9 @@ delete from public.sessions where device_id like 'ghost-%';
 | Play a full game | result on both sides, REMATCH deals a fresh board |
 | BACK TO CHAT mid-game | chat still live, messages sent while playing are there |
 | Let the clock run out during a game | both sides land on the summary |
+| Leave Room mid-game | both return to the lobby, game marked abandoned, clock still running |
+| Leave Room then match again | new room, no re-verification, stats keep adding up |
+| I'm Done | confirmation, then a summary covering every room |
 | One client taps match, the other does not | nothing happens — matching is opt-in on both sides |
 | Both clients tap match | **both** land in the chat |
 | Send from either side | appears on the other within a second |
@@ -391,6 +425,7 @@ src/lib/verify.ts        orchestrates the four checks, shreds every temp file
 src/lib/gesture/         landmark topology + pure gesture classifier
 src/lib/vision/          detector interfaces, model download, MediaPipe impls
 src/lib/game/            tic-tac-toe rules mirror, RPC wrapper, realtime hook
+                         (App.tsx owns session vs room state; see Two lifecycles)
 src/lib/share/           session stats maths + share sheet
 modules/toilet-vision/   local Expo module: MediaPipe Kotlin + Swift
 src/lib/shred.ts         delete temp images off disk

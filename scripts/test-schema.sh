@@ -18,9 +18,16 @@ cleanup
 
 echo "starting postgres..."
 docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=pg postgres:16-alpine >/dev/null
-# pg_isready is not enough: during initdb the server comes up briefly on the
-# unix socket and then restarts, so a probe can pass and the next command still
-# fail. Wait until an actual query succeeds.
+# Readiness is genuinely fiddly here. During initdb the image starts a
+# temporary server on the same socket, runs setup, then shuts it down and
+# starts the real one -- so both pg_isready and a successful `select 1` can
+# pass against a server that is about to disappear. Wait for the image's own
+# "init process complete" marker first, then for a query to work.
+for _ in $(seq 1 90); do
+  if docker logs "$CONTAINER" 2>&1 | grep -q 'init process complete'; then break; fi
+  sleep 1
+done
+
 ready=0
 for _ in $(seq 1 90); do
   if docker exec "$CONTAINER" psql -U postgres -q -c 'select 1' >/dev/null 2>&1; then ready=1; break; fi
@@ -44,7 +51,8 @@ docker exec "$CONTAINER" psql -U postgres -q -v ON_ERROR_STOP=1 -f /schema.sql
 SQL_ERRORS=0
 run_sql() {
   local raw
-  raw="$(docker exec -i "$CONTAINER" psql -U postgres -q -t -A -v ON_ERROR_STOP=1 2>&1)"
+  # `|| true`: a failing block must still report, not kill the run via set -e.
+  raw="$(docker exec -i "$CONTAINER" psql -U postgres -q -t -A -v ON_ERROR_STOP=1 2>&1)" || true
   if grep -q '^ERROR:' <<<"$raw"; then
     echo "  SQL ERROR (aborts the rest of this block):"
     grep '^ERROR:' <<<"$raw" | sed 's/^/    /'
@@ -199,6 +207,89 @@ begin
 end $$;
 SQL
 
+echo "testing leave room vs end session..."
+run_sql <<'SQL'
+truncate public.sessions, public.messages, public.games;
+insert into public.sessions (device_id, nickname) values ('devA','A'), ('devB','B');
+
+do $$
+declare a uuid; b uuid; g public.games; room uuid; started timestamptz; expires timestamptz;
+begin
+  select id into a from public.sessions where device_id='devA';
+  select id into b from public.sessions where device_id='devB';
+
+  perform public.find_match(a);
+  perform public.find_match(b);
+  select room_id, created_at, expires_at into room, started, expires
+    from public.sessions where id = a;
+
+  -- Play a game, then walk out mid-game.
+  g := public.start_game(a);
+  perform public.make_move(g.player_x, g.id, 0);
+  perform public.leave_room(a);
+
+  raise notice 'CHECK left_game_abandoned:%',
+    (select status from public.games where id = g.id);
+
+  -- The session itself is untouched: still alive, same clock, same row.
+  raise notice 'CHECK session_survives:%',
+    (select count(*) from public.sessions where id = a and expires_at > now());
+  raise notice 'CHECK clock_untouched:%',
+    (select count(*) from public.sessions where id = a and expires_at = expires and created_at = started);
+
+  -- Both sides are back in the lobby, neither is still seeking.
+  raise notice 'CHECK both_in_lobby:%',
+    (select count(*) from public.sessions where id in (a,b) and room_id is null and not seeking);
+
+  -- The abandoned game is dead to everyone.
+  begin
+    perform public.make_move(g.player_x, g.id, 4);
+    raise notice 'CHECK stale_game_blocked:0';
+  exception when others then raise notice 'CHECK stale_game_blocked:1'; end;
+
+  -- No room, so no game to start.
+  begin
+    perform public.start_game(a);
+    raise notice 'CHECK start_without_room_blocked:0';
+  exception when others then raise notice 'CHECK start_without_room_blocked:1'; end;
+
+  -- And straight back into matchmaking, no re-verification anywhere.
+  perform public.find_match(a);
+  perform public.find_match(b);
+  raise notice 'CHECK rematched_after_leaving:%',
+    (select count(*) from public.sessions where id in (a,b) and room_id is not null);
+  raise notice 'CHECK new_room:%',
+    (select case when (select room_id from public.sessions where id=a) <> room then 1 else 0 end);
+
+  -- Leaving when already in the lobby is a no-op, not an error.
+  perform public.leave_room(a);
+  perform public.leave_room(a);
+  raise notice 'CHECK leave_twice_ok:1';
+end $$;
+
+-- A finished game keeps its result when the room is later left.
+do $$
+declare a uuid; b uuid; g public.games; x uuid; o uuid;
+begin
+  truncate public.games;
+  select id into a from public.sessions where device_id='devA';
+  select id into b from public.sessions where device_id='devB';
+  -- The previous block left both of them in the lobby, so pair them again.
+  perform public.find_match(a);
+  perform public.find_match(b);
+  g := public.start_game(a);
+  x := g.player_x; o := g.player_o;
+  perform public.make_move(x, g.id, 0);
+  perform public.make_move(o, g.id, 3);
+  perform public.make_move(x, g.id, 1);
+  perform public.make_move(o, g.id, 4);
+  g := public.make_move(x, g.id, 2);
+  perform public.leave_room(a);
+  raise notice 'CHECK finished_game_kept:%',
+    (select status from public.games where id = g.id);
+end $$;
+SQL
+
 FAILED=0
 expect() {
   if grep -qx "$1" "$OUT"; then
@@ -242,6 +333,18 @@ expect "draw_board:XOXXOOOXX"
 expect "draw_winner:none"
 expect "expired_move_blocked:1"
 expect "expired_start_blocked:1"
+
+# leave room vs end session
+expect "left_game_abandoned:abandoned"
+expect "session_survives:1"
+expect "clock_untouched:1"
+expect "both_in_lobby:2"
+expect "stale_game_blocked:1"
+expect "start_without_room_blocked:1"
+expect "rematched_after_leaving:2"
+expect "new_room:1"
+expect "leave_twice_ok:1"
+expect "finished_game_kept:won"
 
 if [ "$SQL_ERRORS" = "1" ]; then FAILED=1; fi
 if [ "$FAILED" = "1" ]; then

@@ -13,7 +13,7 @@
 
 export type Mark = 'X' | 'O';
 export type Cell = Mark | '-';
-export type GameStatus = 'active' | 'won' | 'draw';
+export type GameStatus = 'active' | 'won' | 'draw' | 'abandoned';
 
 export const EMPTY_BOARD = '---------';
 export const BOARD_SIZE = 9;
@@ -91,6 +91,9 @@ export function canPlay(game: TttGame, sessionId: string, cell: number): boolean
 export type Outcome = 'win' | 'loss' | 'draw';
 
 export function outcomeFor(game: TttGame, sessionId: string): Outcome | null {
+  // An abandoned game is not a result. Nobody won it and it does not count
+  // towards games played.
+  if (game.status === 'abandoned') return null;
   if (game.status === 'draw') return 'draw';
   if (game.status !== 'won' || !game.winner) return null;
   const mine = markFor(game, sessionId);
@@ -100,6 +103,7 @@ export function outcomeFor(game: TttGame, sessionId: string): Outcome | null {
 
 /** The one line of copy at the top of the board. */
 export function headline(game: TttGame, sessionId: string): string {
+  if (game.status === 'abandoned') return 'THEY LEFT';
   const outcome = outcomeFor(game, sessionId);
   if (outcome === 'win') return 'YOU WIN';
   if (outcome === 'loss') return 'YOU GOT COOKED 💩';
